@@ -1,0 +1,173 @@
+/*------------------------------------------------------------------------------------------------------
+Description: This trigger is to maintain all opportunity related trigger activities
+Author: Sudheer
+Date Created: 07/07/2017
+Last Modified: 07/07/2017 Note: Introduced rollup calculations for Sales contract fields based on opprtunity fields
+
+------------------------------------------------------------------------------------------------------*/
+trigger Opportunity_Trigger on opportunity (after insert, after update, after delete, after Undelete) {
+
+      List<opportunity> closedoppys = new List<opportunity>();//  list of all closed opportunities. Definition of open is isclosed == false
+      List<opportunity>  openoppys = new List<opportunity>(); // list of all open opprtunities isclosed == true && iswon == true
+      map<id,opportunity> getallops = new map<id,opportunity>();
+      FINAL String procurement = 'Executable Options';
+      if(trigger.isundelete || trigger.isinsert){
+          for(opportunity op: trigger.new ){
+            /*if(op.isclosed == false && op.Sales_Contract__c != null)
+              openoppys.add(op);
+            else if(op.isclosed == true && op.iswon == true  && op.Sales_Contract__c != null)
+              closedoppys.add(op);*/
+              if(op.Sales_Contract__c != null)
+                  getallops.put(op.Sales_Contract__c,op);
+          }
+      }
+      else if(trigger.isdelete){
+          for(opportunity op: trigger.old){
+          /*  if(op.isclosed == false  && op.Sales_Contract__c != null)
+              openoppys.add(op);
+            else if(op.isclosed == true && op.iswon== true  && op.Sales_Contract__c != null)
+              closedoppys.add(op);*/
+              if(op.Sales_Contract__c != null)
+                getallops.put(op.Sales_Contract__c,op);
+          }
+      }
+      else if(trigger.isupdate){
+          for(opportunity op: trigger.new ){
+            if(op.Sales_Contract__c != trigger.oldmap.get(op.Id).Sales_Contract__c  && op.Sales_Contract__c != null){
+                /*if(op.isclosed == false)
+                  openoppys.add(op);
+                else if(op.isclosed == true && op.iswon == true  && op.Sales_Contract__c != null)
+                  closedoppys.add(op);*/
+                  if(op.Sales_Contract__c != null)
+                    getallops.put(op.Sales_Contract__c,op);
+
+              }
+              /*if(trigger.oldmap.get(op.id).isclosed == false  && op.Sales_Contract__c != null)
+                openoppys.add(trigger.oldmap.get(op.id));
+              else if(trigger.oldmap.get(op.id).isclosed == true && trigger.oldmap.get(op.id).iswon == true  && op.Sales_Contract__c != null)
+                closedoppys.add(trigger.oldmap.get(op.id));*/
+                if(trigger.oldmap.get(op.id).Sales_Contract__c != null)
+                  getallops.put(trigger.oldmap.get(op.id).Sales_Contract__c,trigger.oldmap.get(op.id));
+
+          }
+      }
+
+      for(opportunity op:[SELECT id,Sales_Contract__c, isclosed,iswon,Number_of_Overhead_Chargers__c, Total_45_ft_buses__c,Total_35_ft_buses__c,Number_of_Depot_Chargers__c FROM opportunity WHERE Sales_Contract__c IN:getallops.keyset()]){
+          if(op.isclosed == false)
+            openoppys.add(op);
+          else if(op.isclosed == true && op.iswon == true  && op.Sales_Contract__c != null)
+            closedoppys.add(op);
+      }
+
+      /*
+      First step is to create a context for LREngine, by specifying parent and child objects and
+      lookup relationship field name
+     */
+     RollUp_handler.Context ctx = new RollUp_handler.Context(Sales_Contract__c.SobjectType, // parent object
+                                            Opportunity.SobjectType,  // child object
+                                            Schema.SObjectType.Opportunity.fields.Sales_Contract__c ,// relationship field name
+                                            ' isclosed =false AND isdeleted=false AND Procurement_method__c = \'' + procurement + '\'');
+     /*
+      Next, one can add multiple rollup fields on the above relationship.
+      Here specify
+       1. The field to aggregate in child object
+       2. The field to which aggregated value will be saved in master/parent object
+       3. The aggregate operation to be done i.e. SUM, AVG, COUNT, MIN/MAX
+     */
+
+     ctx.add(
+            new RollUp_handler.RollupSummaryField(
+                                              Schema.SObjectType.Sales_Contract__c.fields.Open_Overhead_Charger_Options__c,
+                                                Schema.SObjectType.Opportunity.fields.Number_of_Overhead_Chargers__c,
+                                                RollUp_handler.RollupOperation.sum
+                                           ));
+     ctx.add(
+            new RollUp_handler.RollupSummaryField(
+                                              Schema.SObjectType.Sales_Contract__c.fields.Open_40_Ft_Bus_Options__c,
+                                                Schema.SObjectType.Opportunity.fields.Total_45_ft_buses__c,
+                                                RollUp_handler.RollupOperation.sum
+                                           ));
+
+     ctx.add(
+            new RollUp_handler.RollupSummaryField(
+                                            Schema.SObjectType.Sales_Contract__c.fields.Open_35_Ft_Bus_Options__c,
+                                            Schema.SObjectType.Opportunity.fields.Total_35_ft_buses__c,
+                                            RollUp_handler.RollupOperation.Sum
+                                         ));
+
+
+     ctx.add(
+            new RollUp_handler.RollupSummaryField(
+                                              Schema.SObjectType.Sales_Contract__c.fields.Open_Depot_Charger_Options__c,
+                                                Schema.SObjectType.Opportunity.fields.Number_of_Depot_Chargers__c,
+                                                RollUp_handler.RollupOperation.sum
+                                           ));
+
+     /*
+      Calling rollup method returns in memory master objects with aggregated values in them.
+      Please note these master records are not persisted back, so that client gets a chance
+      to post process them after rollup
+      */
+      system.debug('****Check the parameter list*****' + trigger.new);
+      system.debug('****Check the parameter list for open*****' + getallops.values());
+     Sobject[] masters = RollUp_handler.rollUp(ctx, getallops.values());
+      system.debug('****Check the returned list for open*****' + masters);
+     if(masters != null)
+     UPDATE masters;
+
+     /*
+     First step is to create a context for LREngine, by specifying parent and child objects and
+     lookup relationship field name
+    */
+    RollUp_handler.Context ctx_for_closed = new RollUp_handler.Context(Sales_Contract__c.SobjectType, // parent object
+                                           Opportunity.SobjectType,  // child object
+                                           Schema.SObjectType.Opportunity.fields.Sales_Contract__c, // relationship field name
+                                           ' isclosed =true AND iswon = true AND isdeleted=false AND Procurement_method__c = \'' + procurement + '\'');
+    /*
+     Next, one can add multiple rollup fields on the above relationship.
+     Here specify
+      1. The field to aggregate in child object
+      2. The field to which aggregated value will be saved in master/parent object
+      3. The aggregate operation to be done i.e. SUM, AVG, COUNT, MIN/MAX
+    */
+    ctx_for_closed.add(
+           new RollUp_handler.RollupSummaryField(
+                                             Schema.SObjectType.Sales_Contract__c.fields.Closed_Won_Overhead_Charger_Options__c,
+                                               Schema.SObjectType.Opportunity.fields.Number_of_Overhead_Chargers__c,
+                                               RollUp_handler.RollupOperation.sum
+                                          ));
+    ctx_for_closed.add(
+           new RollUp_handler.RollupSummaryField(
+                                             Schema.SObjectType.Sales_Contract__c.fields.Closed_Won_40_Ft_Bus_Options__c,
+                                               Schema.SObjectType.Opportunity.fields.Total_45_ft_buses__c,
+                                               RollUp_handler.RollupOperation.sum
+                                          ));
+
+    ctx_for_closed.add(
+           new RollUp_handler.RollupSummaryField(
+                                           Schema.SObjectType.Sales_Contract__c.fields.Closed_Won_35_Ft_Bus_Options__c,
+                                           Schema.SObjectType.Opportunity.fields.Total_35_ft_buses__c,
+                                           RollUp_handler.RollupOperation.Sum
+                                        ));
+
+
+    ctx_for_closed.add(
+           new RollUp_handler.RollupSummaryField(
+                                             Schema.SObjectType.Sales_Contract__c.fields.Closed_Won_Depot_Charger_Options__c,
+                                               Schema.SObjectType.Opportunity.fields.Number_of_Depot_Chargers__c,
+                                               RollUp_handler.RollupOperation.sum
+                                          ));
+
+    /*
+     Calling rollup method returns in memory master objects with aggregated values in them.
+     Please note these master records are not persisted back, so that client gets a chance
+     to post process them after rollup
+     */
+     system.debug('****Check the returned list *****' + getallops.values());
+    Sobject[] masters_closed = RollUp_handler.rollUp(ctx_for_closed, getallops.values());
+    system.debug('****Check the returned list for closed*****' + masters_closed);
+      //masters_closed.addall(masters);//Adding all into one list
+    if(masters_closed != null)
+      update masters_closed;
+
+}
